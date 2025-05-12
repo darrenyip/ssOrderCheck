@@ -160,6 +160,25 @@ export const useInventoryStore = defineStore('inventory', () => {
             finalData = jsonData.slice(1)
           }
 
+          // 订单号清理预处理
+          if (headers.includes('线上订单号')) {
+            finalData = finalData.map((item) => {
+              if (item['线上订单号'] && typeof item['线上订单号'] === 'string') {
+                item['线上订单号'] = cleanOrderNumber(item['线上订单号'])
+              }
+              return item
+            })
+          }
+
+          if (headers.includes('主订单编号')) {
+            finalData = finalData.map((item) => {
+              if (item['主订单编号'] && typeof item['主订单编号'] === 'string') {
+                item['主订单编号'] = cleanOrderNumber(item['主订单编号'])
+              }
+              return item
+            })
+          }
+
           // 返回处理后的数据
           resolve(finalData)
         } catch (error) {
@@ -265,7 +284,9 @@ export const useInventoryStore = defineStore('inventory', () => {
             const orderNumber = cleanOrderNumber(item['线上订单号'])
             if (!orderNumber) return
 
-            const quantity = parseInt(item['数量']) || 0
+            // 获取数量并取绝对值，因为仓库发货记录是负数
+            const rawQuantity = parseInt(item['数量']) || 0
+            const quantity = Math.abs(rawQuantity)
 
             if (warehouseOrderMap.has(orderNumber)) {
               const existing = warehouseOrderMap.get(orderNumber)
