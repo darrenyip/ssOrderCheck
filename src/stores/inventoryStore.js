@@ -160,25 +160,6 @@ export const useInventoryStore = defineStore('inventory', () => {
             finalData = jsonData.slice(1)
           }
 
-          // 订单号清理预处理
-          if (headers.includes('线上订单号')) {
-            finalData = finalData.map((item) => {
-              if (item['线上订单号'] && typeof item['线上订单号'] === 'string') {
-                item['线上订单号'] = cleanOrderNumber(item['线上订单号'])
-              }
-              return item
-            })
-          }
-
-          if (headers.includes('主订单编号')) {
-            finalData = finalData.map((item) => {
-              if (item['主订单编号'] && typeof item['主订单编号'] === 'string') {
-                item['主订单编号'] = cleanOrderNumber(item['主订单编号'])
-              }
-              return item
-            })
-          }
-
           // 返回处理后的数据
           resolve(finalData)
         } catch (error) {
@@ -208,8 +189,19 @@ export const useInventoryStore = defineStore('inventory', () => {
   // 处理仓库Excel文件
   const processWarehouseExcel = (file) => {
     return readExcelFile(file, warehouseHeaders.value).then((data) => {
-      warehouseData.value = data
-      return data
+      // 1. 过滤只保留"升升调味品专营店"的数据
+      const filteredData = data.filter((item) => item['店铺名称'] === '升升调味品专营店')
+
+      // 2. 处理订单号前导单引号
+      filteredData.forEach((item) => {
+        if (item['线上订单号']) {
+          // 使用cleanOrderNumber函数清理订单号
+          item['线上订单号'] = cleanOrderNumber(item['线上订单号'])
+        }
+      })
+
+      warehouseData.value = filteredData
+      return filteredData
     })
   }
 
@@ -281,12 +273,10 @@ export const useInventoryStore = defineStore('inventory', () => {
           warehouseData.value.forEach((item) => {
             if (!item['线上订单号']) return
 
-            const orderNumber = cleanOrderNumber(item['线上订单号'])
+            const orderNumber = item['线上订单号'] // 不需要再清理，因为在processWarehouseExcel中已经清理过
             if (!orderNumber) return
 
-            // 获取数量并取绝对值，因为仓库发货记录是负数
-            const rawQuantity = parseInt(item['数量']) || 0
-            const quantity = Math.abs(rawQuantity)
+            const quantity = Math.abs(parseInt(item['数量']) || 0) // 取绝对值，因为仓库发货记录是负数
 
             if (warehouseOrderMap.has(orderNumber)) {
               const existing = warehouseOrderMap.get(orderNumber)

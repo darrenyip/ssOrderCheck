@@ -32,25 +32,14 @@ const analysisResult = ref({
   overShippedQuantity: 0,
   underShippedQuantity: 0,
   netDifference: 0,
-
-  // 新增维度分析结果
-  dateAnalysis: {
-    missingInTmallByDate: {}, // 按日期统计仓库有而天猫没有的订单
-    ordersByDate: {}, // 按日期统计订单数和差异
+  missingInTmallAnalysis: {
+    possibleOtherPlatform: [],
+    possibleExchange: [],
+    possibleOldOrder: [],
+    unknown: [],
   },
-  shopAnalysis: {
-    // 按店铺统计订单差异
-    missingOrdersByShop: {},
-  },
-  productAnalysis: {
-    // 按商品分类统计差异
-    productCategories: {},
-  },
-  possibleCauses: {
-    // 可能的原因分析
-    orderOriginAnalysis: null,
-    shopSources: null,
-    datePatterns: null,
+  timeAnalysis: {
+    monthlyMissingCount: [],
   },
 })
 
@@ -146,29 +135,12 @@ const runAnalysis = () => {
     return cleaned
   }
 
-  // 日期格式化
-  const formatDate = (dateStr) => {
-    if (!dateStr) return null
-    try {
-      const date = new Date(dateStr)
-      if (isNaN(date.getTime())) return null
-      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-    } catch (e) {
-      return null
-    }
-  }
-
   // 使用setTimeout避免UI阻塞
   setTimeout(() => {
     try {
       // 创建订单号索引
       const tmallOrderMap = new Map()
       const warehouseOrderMap = new Map()
-
-      // 用于统计的辅助变量
-      const shopStats = {} // 店铺统计
-      const productStats = {} // 商品分类统计
-      const dateStats = {} // 日期统计
 
       // 按主订单编号聚合天猫数据，计算每个订单的总数量
       inventoryStore.tmallData.forEach((item) => {
@@ -179,43 +151,20 @@ const runAnalysis = () => {
 
         const quantity = parseInt(item['购买数量']) || 0
 
-        // 获取订单日期信息
-        const createDate = formatDate(item['订单创建时间'])
-
-        // 获取商品信息
-        const productTitle = item['标题'] || '未知商品'
-
         if (tmallOrderMap.has(orderNumber)) {
           const existing = tmallOrderMap.get(orderNumber)
           existing.totalQuantity += quantity
           existing.items.push(item)
-
-          // 如果之前没有日期但现在有了
-          if (!existing.date && createDate) {
-            existing.date = createDate
-          }
         } else {
           tmallOrderMap.set(orderNumber, {
             orderNumber,
             totalQuantity: quantity,
             items: [item],
-            date: createDate,
-            productTitle: productTitle,
+            // 记录订单时间信息
+            orderTime: item['订单创建时间'] || '',
+            paymentTime: item['订单付款时间'] || '',
+            status: item['订单状态'] || '',
           })
-        }
-
-        // 更新日期统计
-        if (createDate) {
-          if (!dateStats[createDate]) {
-            dateStats[createDate] = {
-              tmallCount: 0,
-              warehouseCount: 0,
-              tmallQuantity: 0,
-              warehouseQuantity: 0,
-            }
-          }
-          dateStats[createDate].tmallCount++
-          dateStats[createDate].tmallQuantity += quantity
         }
       })
 
@@ -223,157 +172,46 @@ const runAnalysis = () => {
       inventoryStore.warehouseData.forEach((item) => {
         if (!item['线上订单号']) return
 
-        const orderNumber = cleanOrderNumber(item['线上订单号'])
+        const orderNumber = item['线上订单号'] // 仓库数据的订单号在store中已清理
         if (!orderNumber) return
 
         // 获取数量并取绝对值，因为仓库发货记录是负数
         const rawQuantity = parseInt(item['数量']) || 0
         const quantity = Math.abs(rawQuantity)
 
-        // 获取店铺信息
-        const shopName = item['店铺名称'] || '未知店铺'
-
-        // 获取出库日期
-        const shippingDate = formatDate(item['进出仓日期'])
-
-        // 获取商品信息
-        const productCategory = item['分类'] || '未知分类'
-        const productCode = item['商品编码'] || ''
-
         if (warehouseOrderMap.has(orderNumber)) {
           const existing = warehouseOrderMap.get(orderNumber)
           existing.totalQuantity += quantity
           existing.items.push(item)
-
-          // 收集店铺信息
-          if (!existing.shopName && shopName) {
-            existing.shopName = shopName
-          }
-
-          // 收集日期信息
-          if (!existing.shippingDate && shippingDate) {
-            existing.shippingDate = shippingDate
-          }
-
-          // 收集商品分类信息
-          if (productCategory && !existing.categories.includes(productCategory)) {
-            existing.categories.push(productCategory)
-          }
         } else {
           warehouseOrderMap.set(orderNumber, {
             orderNumber,
             totalQuantity: quantity,
             items: [item],
-            shopName: shopName,
-            shippingDate: shippingDate,
-            categories: productCategory ? [productCategory] : [],
-            productCode: productCode,
+            // 记录仓库发货时间和类型
+            shipDate: item['进出仓日期'] || '',
+            shipType: item['出仓类型'] || '',
+            expressNo: item['快递单号'] || '',
+            relatedOrderNo: item['关联单号'] || '',
           })
-
-          // 更新店铺统计
-          if (shopName) {
-            if (!shopStats[shopName]) {
-              shopStats[shopName] = {
-                orderCount: 0,
-                inTmall: 0,
-                notInTmall: 0,
-              }
-            }
-            shopStats[shopName].orderCount++
-          }
-        }
-
-        // 更新商品分类统计
-        if (productCategory) {
-          if (!productStats[productCategory]) {
-            productStats[productCategory] = {
-              orderCount: 0,
-              inTmall: 0,
-              notInTmall: 0,
-            }
-          }
-          productStats[productCategory].orderCount++
-        }
-
-        // 更新日期统计
-        if (shippingDate) {
-          if (!dateStats[shippingDate]) {
-            dateStats[shippingDate] = {
-              tmallCount: 0,
-              warehouseCount: 0,
-              tmallQuantity: 0,
-              warehouseQuantity: 0,
-            }
-          }
-          dateStats[shippingDate].warehouseCount++
-          dateStats[shippingDate].warehouseQuantity += quantity
         }
       })
 
       // 比较两个数据源
       // 1. 找出仓库有记录但天猫没有的订单
       const missingInTmall = []
-      const missingInTmallByDate = {}
-      const missingOrdersByShop = {}
-
       for (const [orderNumber, warehouseOrder] of warehouseOrderMap.entries()) {
         if (!tmallOrderMap.has(orderNumber)) {
           missingInTmall.push({
             orderNumber,
             quantity: warehouseOrder.totalQuantity,
             warehouseDetails: warehouseOrder.items,
-            shopName: warehouseOrder.shopName,
-            shippingDate: warehouseOrder.shippingDate,
-            categories: warehouseOrder.categories,
-            productCode: warehouseOrder.productCode,
+            // 添加分析用的额外信息
+            shipDate: warehouseOrder.shipDate,
+            shipType: warehouseOrder.shipType,
+            expressNo: warehouseOrder.expressNo,
+            relatedOrderNo: warehouseOrder.relatedOrderNo,
           })
-
-          // 更新按日期统计
-          const dateKey = warehouseOrder.shippingDate || '未知日期'
-          if (!missingInTmallByDate[dateKey]) {
-            missingInTmallByDate[dateKey] = {
-              orderCount: 0,
-              totalQuantity: 0,
-            }
-          }
-          missingInTmallByDate[dateKey].orderCount++
-          missingInTmallByDate[dateKey].totalQuantity += warehouseOrder.totalQuantity
-
-          // 更新按店铺统计
-          const shopKey = warehouseOrder.shopName || '未知店铺'
-          if (!missingOrdersByShop[shopKey]) {
-            missingOrdersByShop[shopKey] = {
-              orderCount: 0,
-              totalQuantity: 0,
-            }
-          }
-          missingOrdersByShop[shopKey].orderCount++
-          missingOrdersByShop[shopKey].totalQuantity += warehouseOrder.totalQuantity
-
-          // 更新店铺统计
-          if (warehouseOrder.shopName) {
-            if (shopStats[warehouseOrder.shopName]) {
-              shopStats[warehouseOrder.shopName].notInTmall++
-            }
-          }
-
-          // 更新商品分类统计
-          for (const category of warehouseOrder.categories) {
-            if (productStats[category]) {
-              productStats[category].notInTmall++
-            }
-          }
-        } else {
-          // 有匹配的天猫订单
-          if (warehouseOrder.shopName && shopStats[warehouseOrder.shopName]) {
-            shopStats[warehouseOrder.shopName].inTmall++
-          }
-
-          for (const category of warehouseOrder.categories) {
-            if (productStats[category]) {
-              productStats[category].inTmall++
-            }
-          }
         }
       }
 
@@ -385,8 +223,10 @@ const runAnalysis = () => {
             orderNumber,
             quantity: tmallOrder.totalQuantity,
             tmallDetails: tmallOrder.items,
-            orderDate: tmallOrder.date,
-            productTitle: tmallOrder.productTitle,
+            // 添加分析用的额外信息
+            orderTime: tmallOrder.orderTime,
+            paymentTime: tmallOrder.paymentTime,
+            status: tmallOrder.status,
           })
         }
       }
@@ -408,58 +248,14 @@ const runAnalysis = () => {
               difference: difference,
               tmallDetails: tmallOrder.items,
               warehouseDetails: warehouseOrder.items,
-              orderDate: tmallOrder.date,
-              shippingDate: warehouseOrder.shippingDate,
-              shopName: warehouseOrder.shopName,
-              categories: warehouseOrder.categories,
+              // 添加更多信息便于分析
+              orderTime: tmallOrder.orderTime,
+              paymentTime: tmallOrder.paymentTime,
+              shipDate: warehouseOrder.shipDate,
+              status: tmallOrder.status,
             })
           }
         }
-      }
-
-      // 分析可能的原因
-
-      // 1. 分析仓库多出来的订单来源
-      const shopSourcesAnalysis = Object.entries(missingOrdersByShop)
-        .sort((a, b) => b[1].orderCount - a[1].orderCount)
-        .map(([shop, stats]) => {
-          const percentage = ((stats.orderCount / missingInTmall.length) * 100).toFixed(1)
-          return {
-            shopName: shop,
-            orderCount: stats.orderCount,
-            percentage: `${percentage}%`,
-            totalQuantity: stats.totalQuantity,
-          }
-        })
-
-      // 2. 分析日期模式
-      const datePatternAnalysis = Object.entries(missingInTmallByDate)
-        .sort((a, b) => b[1].orderCount - a[1].orderCount)
-        .map(([date, stats]) => {
-          const percentage = ((stats.orderCount / missingInTmall.length) * 100).toFixed(1)
-          return {
-            date: date,
-            orderCount: stats.orderCount,
-            percentage: `${percentage}%`,
-            totalQuantity: stats.totalQuantity,
-          }
-        })
-
-      // 3. 分析可能的原因
-      let orderOriginAnalysis = null
-
-      // 如果有超过50%的缺失订单来自同一个店铺，可能是其他渠道订单
-      const mainShopSource = shopSourcesAnalysis[0]
-      if (mainShopSource && parseFloat(mainShopSource.percentage) > 50) {
-        orderOriginAnalysis = `有${mainShopSource.percentage}的缺失订单来自"${mainShopSource.shopName}"，这些可能是非天猫渠道的订单`
-      }
-
-      // 如果有超过50%的缺失订单集中在某一天，可能是导出数据的时间范围不一致
-      const mainDatePattern = datePatternAnalysis[0]
-      if (mainDatePattern && parseFloat(mainDatePattern.percentage) > 50) {
-        orderOriginAnalysis = orderOriginAnalysis || ''
-        if (orderOriginAnalysis) orderOriginAnalysis += '\n'
-        orderOriginAnalysis += `有${mainDatePattern.percentage}的缺失订单出现在"${mainDatePattern.date}"，可能是天猫数据的导出时间范围与仓库不一致`
       }
 
       // 更新分析结果
@@ -505,6 +301,12 @@ const runAnalysis = () => {
       // 计算净差值
       const netDifference = overShippedQuantity - underShippedQuantity
 
+      // 分析仓库多出订单的可能原因
+      const missingInTmallAnalysis = analyzeWarehouseExtraOrders(missingInTmall)
+
+      // 分析时间分布
+      const timeAnalysis = analyzeTimeTrend(tmallOrderMap, warehouseOrderMap, missingInTmall)
+
       // 直接赋值分析结果，不通过store
       analysisResult.value = {
         inBoth,
@@ -518,24 +320,9 @@ const runAnalysis = () => {
         overShippedQuantity,
         underShippedQuantity,
         netDifference,
-
-        // 新增多维度分析结果
-        dateAnalysis: {
-          missingInTmallByDate: missingInTmallByDate,
-          ordersByDate: dateStats,
-        },
-        shopAnalysis: {
-          missingOrdersByShop: missingOrdersByShop,
-          shopStats: shopStats,
-        },
-        productAnalysis: {
-          productStats: productStats,
-        },
-        possibleCauses: {
-          orderOriginAnalysis: orderOriginAnalysis,
-          shopSources: shopSourcesAnalysis,
-          datePatterns: datePatternAnalysis,
-        },
+        // 新增的高级分析结果
+        missingInTmallAnalysis,
+        timeAnalysis,
       }
 
       analysisCompleted.value = true
@@ -549,6 +336,85 @@ const runAnalysis = () => {
       isAnalyzing.value = false
     }
   }, 100)
+}
+
+// 分析仓库多出订单的可能原因
+const analyzeWarehouseExtraOrders = (missingInTmall) => {
+  const result = {
+    // 可能是其他平台订单
+    possibleOtherPlatform: [],
+    // 可能是换货单
+    possibleExchange: [],
+    // 可能是天猫数据缺失(时间较早的订单)
+    possibleOldOrder: [],
+    // 未知原因
+    unknown: [],
+  }
+
+  missingInTmall.forEach((order) => {
+    // 检查是否有关联单号，可能是换货单
+    if (order.relatedOrderNo && order.relatedOrderNo.trim() !== '') {
+      result.possibleExchange.push(order)
+      return
+    }
+
+    // 检查订单号格式，不是常规数字格式可能是其他平台
+    if (!/^\d+$/.test(order.orderNumber)) {
+      result.possibleOtherPlatform.push(order)
+      return
+    }
+
+    // 根据发货日期判断是否可能是较早的订单(超过3个月)
+    const shipDate = order.shipDate ? new Date(order.shipDate) : null
+    if (shipDate) {
+      const threeMonthsAgo = new Date()
+      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3)
+
+      if (shipDate < threeMonthsAgo) {
+        result.possibleOldOrder.push(order)
+        return
+      }
+    }
+
+    // 其他未知原因
+    result.unknown.push(order)
+  })
+
+  return result
+}
+
+// 分析时间趋势
+const analyzeTimeTrend = (tmallOrderMap, warehouseOrderMap, missingInTmall) => {
+  // 按月份分组统计缺失订单数量
+  const monthlyMissingCount = {}
+
+  missingInTmall.forEach((order) => {
+    if (!order.shipDate) return
+
+    try {
+      const date = new Date(order.shipDate)
+      const monthKey = `${date.getFullYear()}-${date.getMonth() + 1}`
+
+      if (!monthlyMissingCount[monthKey]) {
+        monthlyMissingCount[monthKey] = {
+          count: 0,
+          quantity: 0,
+          month: monthKey,
+        }
+      }
+
+      monthlyMissingCount[monthKey].count++
+      monthlyMissingCount[monthKey].quantity += order.quantity
+    } catch (e) {
+      console.error('日期格式错误:', order.shipDate, e)
+    }
+  })
+
+  return {
+    monthlyMissingCount: Object.values(monthlyMissingCount).sort((a, b) =>
+      a.month.localeCompare(b.month),
+    ),
+  }
 }
 
 // 从store获取数据
@@ -588,23 +454,15 @@ const resetAnalysis = () => {
     overShippedQuantity: 0,
     underShippedQuantity: 0,
     netDifference: 0,
-
-    // 重置多维度分析结果
-    dateAnalysis: {
-      missingInTmallByDate: {},
-      ordersByDate: {},
+    // 新增的高级分析结果
+    missingInTmallAnalysis: {
+      possibleOtherPlatform: [],
+      possibleExchange: [],
+      possibleOldOrder: [],
+      unknown: [],
     },
-    shopAnalysis: {
-      missingOrdersByShop: {},
-      shopStats: {},
-    },
-    productAnalysis: {
-      productStats: {},
-    },
-    possibleCauses: {
-      orderOriginAnalysis: null,
-      shopSources: null,
-      datePatterns: null,
+    timeAnalysis: {
+      monthlyMissingCount: [],
     },
   }
   analysisCompleted.value = false
@@ -631,9 +489,10 @@ const exportAnalysisToExcel = () => {
       仓库数量: item.warehouseQuantity,
       差异: item.difference,
       备注: item.difference > 0 ? '仓库多发' : '仓库少发',
-      订单日期: item.orderDate || '',
-      发货日期: item.shippingDate || '',
-      店铺名称: item.shopName || '',
+      订单时间: item.orderTime || '',
+      付款时间: item.paymentTime || '',
+      发货时间: item.shipDate || '',
+      订单状态: item.status || '',
     }))
 
     // 准备缺失订单数据
@@ -641,65 +500,112 @@ const exportAnalysisToExcel = () => {
       订单号: formatOrderNumber(item.orderNumber),
       仓库数量: item.quantity,
       天猫状态: '缺失',
-      店铺名称: item.shopName || '未知',
-      发货日期: item.shippingDate || '',
-      商品分类: (item.categories || []).join(', '),
       备注: '仓库有发货记录，天猫无订单记录',
+      发货日期: item.shipDate || '',
+      发货类型: item.shipType || '',
+      快递单号: item.expressNo || '',
+      关联单号: item.relatedOrderNo || '',
     }))
 
     const missingInWarehouseData = analysisResult.value.missingInWarehouse.map((item) => ({
       订单号: formatOrderNumber(item.orderNumber),
       天猫数量: item.quantity,
       仓库状态: '缺失',
-      订单日期: item.orderDate || '',
-      商品名称: item.productTitle || '',
       备注: '天猫有订单记录，仓库无发货记录',
+      订单创建时间: item.orderTime || '',
+      订单付款时间: item.paymentTime || '',
+      订单状态: item.status || '',
     }))
 
-    // 准备店铺来源分析数据
-    const shopSourcesData = (analysisResult.value.possibleCauses.shopSources || []).map((item) => ({
-      店铺名称: item.shopName,
-      订单数量: item.orderCount,
-      占比: item.percentage,
-      总数量: item.totalQuantity,
-    }))
-
-    // 准备日期分析数据
-    const datePatternData = (analysisResult.value.possibleCauses.datePatterns || []).map(
+    // 新增：售后换货单分析数据
+    const exchangeOrdersData = analysisResult.value.missingInTmallAnalysis.possibleExchange.map(
       (item) => ({
-        日期: item.date,
-        订单数量: item.orderCount,
-        占比: item.percentage,
-        总数量: item.totalQuantity,
+        订单号: formatOrderNumber(item.orderNumber),
+        关联单号: item.relatedOrderNo || '',
+        发货数量: item.quantity,
+        发货日期: item.shipDate || '',
+        发货类型: item.shipType || '',
+        快递单号: item.expressNo || '',
+        分析结论: '可能是售后换货订单',
       }),
     )
 
-    // 准备总体统计数据
-    const summaryData = [
-      {
-        总订单数:
-          analysisResult.value.inBoth +
-          analysisResult.value.onlyInTmall +
-          analysisResult.value.onlyInWarehouse,
-        天猫订单数: analysisResult.value.inBoth + analysisResult.value.onlyInTmall,
-        仓库订单数: analysisResult.value.inBoth + analysisResult.value.onlyInWarehouse,
-        同时存在订单数: analysisResult.value.inBoth,
-        仅天猫存在订单数: analysisResult.value.onlyInTmall,
-        仅仓库存在订单数: analysisResult.value.onlyInWarehouse,
-        天猫总数量: analysisResult.value.tmallTotalQuantity,
-        仓库总数量: analysisResult.value.warehouseTotalQuantity,
-        多发总数: analysisResult.value.overShippedQuantity,
-        少发总数: analysisResult.value.underShippedQuantity,
-        总差异: analysisResult.value.netDifference,
-      },
-    ]
+    // 新增：可能来自其他平台的订单
+    const otherPlatformOrdersData =
+      analysisResult.value.missingInTmallAnalysis.possibleOtherPlatform.map((item) => ({
+        订单号: formatOrderNumber(item.orderNumber),
+        发货数量: item.quantity,
+        发货日期: item.shipDate || '',
+        发货类型: item.shipType || '',
+        分析结论: '可能来自其他平台',
+      }))
+
+    // 新增：可能是较早订单
+    const oldOrdersData = analysisResult.value.missingInTmallAnalysis.possibleOldOrder.map(
+      (item) => ({
+        订单号: formatOrderNumber(item.orderNumber),
+        发货数量: item.quantity,
+        发货日期: item.shipDate || '',
+        发货类型: item.shipType || '',
+        分析结论: '可能是较早订单(超过3个月)',
+      }),
+    )
+
+    // 新增：未知原因订单
+    const unknownOrdersData = analysisResult.value.missingInTmallAnalysis.unknown.map((item) => ({
+      订单号: formatOrderNumber(item.orderNumber),
+      发货数量: item.quantity,
+      发货日期: item.shipDate || '',
+      分析结论: '原因未知',
+    }))
+
+    // 新增：按月份统计
+    const monthlyAnalysisData = analysisResult.value.timeAnalysis.monthlyMissingCount.map(
+      (item) => ({
+        月份: item.month,
+        订单数量: item.count,
+        商品总数: item.quantity,
+        占比: `${Math.round((item.count / analysisResult.value.missingInTmall.length) * 100)}%`,
+      }),
+    )
 
     // 创建工作簿
     const wb = XLSX.utils.book_new()
 
-    // 添加摘要工作表
-    const ws0 = XLSX.utils.json_to_sheet(summaryData)
-    XLSX.utils.book_append_sheet(wb, ws0, '分析摘要')
+    // 添加汇总工作表
+    const summaryData = [
+      { 项目: '天猫订单总数', 数量: tmallData.value.length },
+      { 项目: '仓库记录总数', 数量: warehouseData.value.length },
+      { 项目: '天猫商品总数', 数量: analysisResult.value.tmallTotalQuantity },
+      { 项目: '仓库发货总数', 数量: analysisResult.value.warehouseTotalQuantity },
+      { 项目: '仓库多发总数', 数量: analysisResult.value.overShippedQuantity },
+      { 项目: '仓库少发总数', 数量: analysisResult.value.underShippedQuantity },
+      {
+        项目: '净差异',
+        数量: analysisResult.value.netDifference,
+        备注: analysisResult.value.netDifference > 0 ? '总体多发' : '总体少发',
+      },
+      { 项目: '同时存在的订单', 数量: analysisResult.value.inBoth },
+      { 项目: '仅天猫存在的订单', 数量: analysisResult.value.onlyInTmall },
+      { 项目: '仅仓库存在的订单', 数量: analysisResult.value.onlyInWarehouse },
+      { 项目: '数量不匹配的订单', 数量: analysisResult.value.quantityMismatch.length },
+      {
+        项目: '疑似售后换货订单',
+        数量: analysisResult.value.missingInTmallAnalysis.possibleExchange.length,
+      },
+      {
+        项目: '疑似其他平台订单',
+        数量: analysisResult.value.missingInTmallAnalysis.possibleOtherPlatform.length,
+      },
+      {
+        项目: '疑似较早订单',
+        数量: analysisResult.value.missingInTmallAnalysis.possibleOldOrder.length,
+      },
+      { 项目: '原因未知订单', 数量: analysisResult.value.missingInTmallAnalysis.unknown.length },
+    ]
+
+    const wsSummary = XLSX.utils.json_to_sheet(summaryData)
+    XLSX.utils.book_append_sheet(wb, wsSummary, '分析汇总')
 
     // 添加数量不匹配工作表
     if (quantityMismatchData.length > 0) {
@@ -719,20 +625,40 @@ const exportAnalysisToExcel = () => {
       XLSX.utils.book_append_sheet(wb, ws3, '仓库缺失订单')
     }
 
-    // 添加店铺分析工作表
-    if (shopSourcesData.length > 0) {
-      const ws4 = XLSX.utils.json_to_sheet(shopSourcesData)
-      XLSX.utils.book_append_sheet(wb, ws4, '店铺来源分析')
+    // 添加高级分析工作表
+
+    // 售后换货单
+    if (exchangeOrdersData.length > 0) {
+      const ws4 = XLSX.utils.json_to_sheet(exchangeOrdersData)
+      XLSX.utils.book_append_sheet(wb, ws4, '可能的售后换货单')
     }
 
-    // 添加日期分析工作表
-    if (datePatternData.length > 0) {
-      const ws5 = XLSX.utils.json_to_sheet(datePatternData)
-      XLSX.utils.book_append_sheet(wb, ws5, '日期分析')
+    // 其他平台订单
+    if (otherPlatformOrdersData.length > 0) {
+      const ws5 = XLSX.utils.json_to_sheet(otherPlatformOrdersData)
+      XLSX.utils.book_append_sheet(wb, ws5, '可能的其他平台订单')
+    }
+
+    // 较早订单
+    if (oldOrdersData.length > 0) {
+      const ws6 = XLSX.utils.json_to_sheet(oldOrdersData)
+      XLSX.utils.book_append_sheet(wb, ws6, '可能的较早订单')
+    }
+
+    // 未知原因
+    if (unknownOrdersData.length > 0) {
+      const ws7 = XLSX.utils.json_to_sheet(unknownOrdersData)
+      XLSX.utils.book_append_sheet(wb, ws7, '原因未知订单')
+    }
+
+    // 月度统计
+    if (monthlyAnalysisData.length > 0) {
+      const ws8 = XLSX.utils.json_to_sheet(monthlyAnalysisData)
+      XLSX.utils.book_append_sheet(wb, ws8, '月度分布统计')
     }
 
     // 导出文件
-    XLSX.writeFile(wb, '订单差异多维度分析.xlsx')
+    XLSX.writeFile(wb, '订单差异分析结果.xlsx')
 
     ElMessage.success('分析结果已导出')
   } catch (error) {
@@ -913,116 +839,6 @@ const exportAnalysisToExcel = () => {
           </div>
         </div>
 
-        <div class="stats-summary">
-          <div class="stat-item">
-            <div class="stat-label">
-              <el-tooltip content="天猫订单总数量" placement="top" effect="light">
-                <span class="tooltip-label">天猫总数量</span>
-              </el-tooltip>
-            </div>
-            <div class="stat-value">{{ analysisResult.tmallTotalQuantity }}</div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-label">
-              <el-tooltip content="仓库发货总数量" placement="top" effect="light">
-                <span class="tooltip-label">仓库总数量</span>
-              </el-tooltip>
-            </div>
-            <div class="stat-value">{{ analysisResult.warehouseTotalQuantity }}</div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-label">
-              <el-tooltip content="仓库发货总数量 - 天猫订单总数量" placement="top" effect="light">
-                <span class="tooltip-label">总数量差异</span>
-              </el-tooltip>
-            </div>
-            <div
-              class="stat-value"
-              :class="{
-                'text-danger': analysisResult.netDifference > 0,
-                'text-warning': analysisResult.netDifference < 0,
-              }"
-            >
-              {{ analysisResult.netDifference > 0 ? '+' : '' }}{{ analysisResult.netDifference }}
-            </div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-label">
-              <el-tooltip content="仓库超出天猫订单发货的总数量" placement="top" effect="light">
-                <span class="tooltip-label">多发数量</span>
-              </el-tooltip>
-            </div>
-            <div class="stat-value text-danger">+{{ analysisResult.overShippedQuantity }}</div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-label">
-              <el-tooltip content="天猫订单中未发货的总数量" placement="top" effect="light">
-                <span class="tooltip-label">少发数量</span>
-              </el-tooltip>
-            </div>
-            <div class="stat-value text-warning">-{{ analysisResult.underShippedQuantity }}</div>
-          </div>
-        </div>
-
-        <h2 class="section-title-special">
-          <span class="line"></span>
-          <span class="title-text">多维度分析</span>
-          <span class="line"></span>
-        </h2>
-
-        <!-- 可能的原因分析 -->
-        <div class="result-section" v-if="analysisResult.possibleCauses.orderOriginAnalysis">
-          <h3 class="result-title">问题原因分析</h3>
-          <div class="cause-analysis">
-            <div class="alert-info">
-              <p>根据数据分析，以下可能是仓库多出订单的原因：</p>
-              <p>{{ analysisResult.possibleCauses.orderOriginAnalysis }}</p>
-            </div>
-          </div>
-        </div>
-
-        <!-- 店铺分析 -->
-        <div
-          class="result-section"
-          v-if="
-            analysisResult.possibleCauses.shopSources &&
-            analysisResult.possibleCauses.shopSources.length > 0
-          "
-        >
-          <h3 class="result-title">仓库多出订单的店铺来源分析</h3>
-          <el-table
-            :data="analysisResult.possibleCauses.shopSources.slice(0, 10)"
-            border
-            style="width: 100%"
-          >
-            <el-table-column prop="shopName" label="店铺名称" min-width="180" />
-            <el-table-column prop="orderCount" label="订单数量" width="120" />
-            <el-table-column prop="percentage" label="占比" width="100" />
-            <el-table-column prop="totalQuantity" label="总数量" width="100" />
-          </el-table>
-        </div>
-
-        <!-- 日期分析 -->
-        <div
-          class="result-section"
-          v-if="
-            analysisResult.possibleCauses.datePatterns &&
-            analysisResult.possibleCauses.datePatterns.length > 0
-          "
-        >
-          <h3 class="result-title">仓库多出订单的日期分布</h3>
-          <el-table
-            :data="analysisResult.possibleCauses.datePatterns.slice(0, 10)"
-            border
-            style="width: 100%"
-          >
-            <el-table-column prop="date" label="日期" min-width="150" />
-            <el-table-column prop="orderCount" label="订单数量" width="120" />
-            <el-table-column prop="percentage" label="占比" width="100" />
-            <el-table-column prop="totalQuantity" label="总数量" width="100" />
-          </el-table>
-        </div>
-
         <h2 class="section-title-special">
           <span class="line"></span>
           <span class="title-text">详细分析结果</span>
@@ -1087,8 +903,6 @@ const exportAnalysisToExcel = () => {
             >
               <el-table-column prop="orderNumber" label="订单号" width="200" />
               <el-table-column prop="quantity" label="仓库发货数量" width="150" />
-              <el-table-column prop="shopName" label="店铺名称" width="150" />
-              <el-table-column prop="shippingDate" label="发货日期" width="150" />
               <el-table-column label="问题分析" min-width="140">
                 <template #default>
                   <span class="text-danger">天猫订单数据缺失</span>
@@ -1119,7 +933,6 @@ const exportAnalysisToExcel = () => {
             >
               <el-table-column prop="orderNumber" label="订单号" width="200" />
               <el-table-column prop="quantity" label="天猫订单数量" width="150" />
-              <el-table-column prop="orderDate" label="订单日期" width="150" />
               <el-table-column label="问题分析" min-width="140">
                 <template #default>
                   <span class="text-warning">仓库发货数据缺失</span>
@@ -1130,6 +943,189 @@ const exportAnalysisToExcel = () => {
               仅显示前100条记录，完整数据请导出Excel
             </div>
           </template>
+        </div>
+
+        <!-- 新增：仓库多出订单原因分析 -->
+        <div class="result-section" v-if="analysisResult.missingInTmall.length > 0">
+          <h3 class="result-title">仓库多出订单原因分析</h3>
+          <div class="advanced-analysis">
+            <div class="stats-summary cause-summary">
+              <div
+                class="stat-item"
+                v-if="analysisResult.missingInTmallAnalysis.possibleExchange.length > 0"
+              >
+                <div class="stat-label">
+                  <el-tooltip
+                    content="存在关联单号的订单，可能是换货、退货等售后订单"
+                    placement="top"
+                    effect="light"
+                  >
+                    <span class="tooltip-label">可能是售后换货单</span>
+                  </el-tooltip>
+                </div>
+                <div class="stat-value">
+                  {{ analysisResult.missingInTmallAnalysis.possibleExchange.length }} 个订单
+                </div>
+              </div>
+
+              <div
+                class="stat-item"
+                v-if="analysisResult.missingInTmallAnalysis.possibleOtherPlatform.length > 0"
+              >
+                <div class="stat-label">
+                  <el-tooltip
+                    content="订单号格式与天猫常规格式不符，可能来自其他销售平台"
+                    placement="top"
+                    effect="light"
+                  >
+                    <span class="tooltip-label">可能来自其他平台</span>
+                  </el-tooltip>
+                </div>
+                <div class="stat-value">
+                  {{ analysisResult.missingInTmallAnalysis.possibleOtherPlatform.length }} 个订单
+                </div>
+              </div>
+
+              <div
+                class="stat-item"
+                v-if="analysisResult.missingInTmallAnalysis.possibleOldOrder.length > 0"
+              >
+                <div class="stat-label">
+                  <el-tooltip
+                    content="订单发货日期较早（超过3个月），可能是天猫数据缺失的历史订单"
+                    placement="top"
+                    effect="light"
+                  >
+                    <span class="tooltip-label">可能是较早订单</span>
+                  </el-tooltip>
+                </div>
+                <div class="stat-value">
+                  {{ analysisResult.missingInTmallAnalysis.possibleOldOrder.length }} 个订单
+                </div>
+              </div>
+
+              <div
+                class="stat-item"
+                v-if="analysisResult.missingInTmallAnalysis.unknown.length > 0"
+              >
+                <div class="stat-label">
+                  <el-tooltip
+                    content="无法确定原因的订单，需要进一步核实"
+                    placement="top"
+                    effect="light"
+                  >
+                    <span class="tooltip-label">原因未知</span>
+                  </el-tooltip>
+                </div>
+                <div class="stat-value">
+                  {{ analysisResult.missingInTmallAnalysis.unknown.length }} 个订单
+                </div>
+              </div>
+            </div>
+
+            <!-- 售后换货单详细列表 -->
+            <div
+              class="detail-section"
+              v-if="analysisResult.missingInTmallAnalysis.possibleExchange.length > 0"
+            >
+              <h4 class="detail-title">
+                <el-tooltip
+                  content="这些订单存在关联单号，可能是因换货而产生的发货记录"
+                  placement="top"
+                  effect="light"
+                >
+                  <span
+                    >可能的售后换货单 ({{
+                      analysisResult.missingInTmallAnalysis.possibleExchange.length
+                    }})</span
+                  >
+                </el-tooltip>
+              </h4>
+              <el-table
+                :data="analysisResult.missingInTmallAnalysis.possibleExchange.slice(0, 20)"
+                border
+                style="width: 100%"
+                max-height="250"
+                size="small"
+              >
+                <el-table-column prop="orderNumber" label="订单号" width="180" />
+                <el-table-column prop="relatedOrderNo" label="关联单号" width="180" />
+                <el-table-column prop="quantity" label="发货数量" width="100" />
+                <el-table-column prop="shipDate" label="发货日期" width="120" />
+              </el-table>
+              <div
+                v-if="analysisResult.missingInTmallAnalysis.possibleExchange.length > 20"
+                class="more-data-hint"
+              >
+                仅显示前20条记录，完整数据请导出Excel
+              </div>
+            </div>
+
+            <!-- 其他平台订单 -->
+            <div
+              class="detail-section"
+              v-if="analysisResult.missingInTmallAnalysis.possibleOtherPlatform.length > 0"
+            >
+              <h4 class="detail-title">
+                <el-tooltip
+                  content="这些订单号格式与天猫常规订单不同，可能来自其他销售平台"
+                  placement="top"
+                  effect="light"
+                >
+                  <span
+                    >可能来自其他平台的订单 ({{
+                      analysisResult.missingInTmallAnalysis.possibleOtherPlatform.length
+                    }})</span
+                  >
+                </el-tooltip>
+              </h4>
+              <el-table
+                :data="analysisResult.missingInTmallAnalysis.possibleOtherPlatform.slice(0, 20)"
+                border
+                style="width: 100%"
+                max-height="250"
+                size="small"
+              >
+                <el-table-column prop="orderNumber" label="订单号" width="180" />
+                <el-table-column prop="quantity" label="发货数量" width="100" />
+                <el-table-column prop="shipDate" label="发货日期" width="120" />
+              </el-table>
+              <div
+                v-if="analysisResult.missingInTmallAnalysis.possibleOtherPlatform.length > 20"
+                class="more-data-hint"
+              >
+                仅显示前20条记录，完整数据请导出Excel
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 新增：时间趋势分析 -->
+        <div
+          class="result-section"
+          v-if="analysisResult.timeAnalysis.monthlyMissingCount.length > 0"
+        >
+          <h3 class="result-title">缺失订单时间趋势分析</h3>
+          <div class="time-analysis">
+            <p class="analysis-intro">
+              以下是仓库多出订单的月度分布情况，可能有助于确定数据缺失的时间规律：
+            </p>
+            <el-table
+              :data="analysisResult.timeAnalysis.monthlyMissingCount"
+              border
+              style="width: 100%"
+              max-height="300"
+            >
+              <el-table-column prop="month" label="月份" width="120" />
+              <el-table-column prop="count" label="订单数量" width="100" />
+              <el-table-column prop="quantity" label="商品总数" width="100" />
+              <el-table-column label="订单比例" min-width="140">
+                <template #default="scope">
+                  {{ Math.round((scope.row.count / analysisResult.missingInTmall.length) * 100) }}%
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
         </div>
       </div>
     </section>
@@ -1329,34 +1325,44 @@ const exportAnalysisToExcel = () => {
   line-height: 1.5;
 }
 
-.result-section {
-  margin-bottom: 35px;
+/* 自定义折叠面板样式 */
+:deep(.el-collapse) {
+  border: none;
+  --el-collapse-header-height: auto;
+  --el-collapse-header-bg-color: transparent;
+  --el-collapse-content-bg-color: transparent;
 }
 
-.result-title {
-  font-size: 1.1rem;
+:deep(.el-collapse-item__header) {
+  padding: 15px 0 10px;
+  font-size: 1.2rem;
   color: #303133;
-  margin-bottom: 15px;
   font-weight: normal;
   border-left: 4px solid #409eff;
   padding-left: 10px;
 }
 
-.cause-analysis {
-  margin-bottom: 20px;
+:deep(.el-collapse-item__arrow) {
+  margin-right: 10px;
 }
 
-.alert-info {
-  background-color: #f0f9ff;
-  border-left: 4px solid #409eff;
-  padding: 15px;
-  border-radius: 0 4px 4px 0;
-  color: #0a58ca;
-  margin-bottom: 15px;
+:deep(.el-collapse-item__wrap) {
+  border: none;
 }
 
-.alert-info p {
-  margin: 5px 0;
+:deep(.el-collapse-item__content) {
+  padding: 10px 0 15px 14px;
+}
+
+:deep(.el-collapse-item__header .tooltip-label) {
+  border-bottom: none;
+  display: inline-block;
+  margin-right: 5px;
+}
+
+:deep(.el-collapse-item__header .el-tooltip) {
+  display: inline-block;
+  max-width: calc(100% - 50px);
 }
 
 @media (max-width: 1600px) {
@@ -1407,5 +1413,49 @@ const exportAnalysisToExcel = () => {
     margin-left: 0;
     margin-top: 5px;
   }
+}
+
+.result-section {
+  margin-bottom: 35px;
+}
+
+.result-title {
+  font-size: 1.1rem;
+  color: #303133;
+  margin-bottom: 15px;
+  font-weight: normal;
+  border-left: 4px solid #409eff;
+  padding-left: 10px;
+}
+
+.detail-title {
+  font-size: 1rem;
+  color: #606266;
+  margin: 15px 0 10px;
+  font-weight: normal;
+}
+
+.detail-section {
+  margin-bottom: 25px;
+}
+
+.advanced-analysis {
+  background-color: #f8f9fa;
+  border-radius: 6px;
+  padding: 15px;
+  margin-top: 10px;
+}
+
+.cause-summary {
+  margin-bottom: 20px;
+}
+
+.analysis-intro {
+  margin-bottom: 15px;
+  color: #606266;
+}
+
+.time-analysis {
+  margin-top: 10px;
 }
 </style>
