@@ -1,29 +1,49 @@
-# ssOrderCheck
+# 升升食品 - 订单数据分析系统
 
-This template should help get you started developing with Vue 3 in Vite.
+此系统用于比较天猫订单数据与仓库发货数据，检测数量不匹配的情况，帮助解决库存和订单管理问题。
 
-## Recommended IDE Setup
+## 主要功能
 
-[VSCode](https://code.visualstudio.com/) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
+- **天猫数据处理**：从Excel读取数据，处理主订单编号前导单引号，并根据商家编码计算应发包数
+- **仓库数据处理**：处理仓库发货记录（数量通常为负数），取绝对值用于比较
+- **数据比较分析**：找出数量不匹配订单、仅在天猫存在的订单、仅在仓库存在的订单
+- **详细分析**：对无法匹配订单进行分类（售后换货单、其他平台订单、较早订单等）
+- **数据可视化**：表格展示订单信息，包括商品属性、包数计算等，带有分页功能
+- **数据导出**：将分析结果导出到Excel文件，包含多个工作表
 
-## Customize configuration
+## 开发环境设置
 
-See [Vite Configuration Reference](https://vite.dev/config/).
+推荐使用 [VSCode](https://code.visualstudio.com/) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar)。
 
-## Project Setup
+## 项目安装
 
 ```sh
 pnpm install
 ```
 
-### Compile and Hot-Reload for Development
+### 开发环境编译和热重载
 
 ```sh
 pnpm dev
 ```
 
-### Compile and Minify for Production
+### 生产环境编译和压缩
 
 ```sh
 pnpm build
 ```
+
+## 使用方法
+
+1. 上传天猫Excel数据文件（包含订单记录）
+2. 上传仓库Excel数据文件（包含发货记录）
+3. 点击"开始分析"按钮进行数据分析
+4. 查看分析结果，包括数量不匹配的订单、缺失的订单等
+5. 可以导出分析结果到Excel文件进行进一步处理
+
+## 系统特性
+
+- **商家编码与包数映射**：系统内置了商品组合编码与包数的对应关系
+- **缺失订单分析**：提供对缺失订单的可能原因分析
+- **时间趋势分析**：按月度统计缺失订单，帮助识别系统性问题
+- **详细订单信息**：提供订单的完整信息，包括时间、状态、数量等
